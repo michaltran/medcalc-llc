@@ -2,42 +2,68 @@
 
 **Trung tâm Y tế khu vực Liên Chiểu**
 
-Hệ thống nội bộ cung cấp các bảng kiểm và công cụ tính toán y khoa, lấy cảm hứng từ MDCalc và bản địa hóa hoàn toàn tiếng Việt. Tích hợp các tính năng quan trọng cho cơ sở y tế: quản lý hồ sơ bệnh nhân, lưu lịch sử tính toán, xuất kết quả PDF/in, và phác đồ điều trị nội bộ.
+Hệ thống công cụ tính toán y khoa nội bộ, lấy cảm hứng từ MDCalc, bản địa hóa tiếng Việt. Triển khai theo kiến trúc **Vercel (frontend + serverless API) + PostgreSQL** trên server vật lý.
 
 ---
 
-## Kiến trúc
+## Kiến trúc triển khai
+
+```
+┌─────────────────────────────┐         ┌──────────────────────────┐
+│  Vercel (cloud)             │         │  Server vật lý           │
+│  ─ Frontend React (static)  │  HTTPS  │  ─ PostgreSQL 14+        │
+│  ─ Serverless API (api/*)   │ ◄─────► │  ─ Public IP / Tunnel    │
+│  ─ Edge cache               │   SSL   │                          │
+└─────────────────────────────┘         └──────────────────────────┘
+        ▲
+        │ HTTPS
+        │
+   Bác sĩ / điều dưỡng (browser)
+```
+
+---
+
+## Cấu trúc thư mục
 
 ```
 medcalc-llc/
-├── backend/              # Node.js + Express + SQLite
-│   ├── src/
-│   │   ├── server.js
-│   │   ├── db.js
-│   │   ├── initDb.js     # Khởi tạo schema + seed data
-│   │   ├── middleware/
-│   │   │   └── auth.js   # JWT authentication
-│   │   └── routes/
-│   │       ├── auth.js
-│   │       ├── patients.js
-│   │       ├── history.js
-│   │       └── protocols.js
-│   └── data/             # SQLite database (auto-created)
-└── frontend/             # React + Vite
-    └── src/
-        ├── App.jsx
-        ├── calculators/  # Định nghĩa các bảng kiểm (thuần JS, dễ mở rộng)
-        │   ├── cha2ds2vasc.js
-        │   ├── hasbled.js
-        │   ├── grace.js
-        │   ├── timi.js
-        │   ├── egfr.js
-        │   ├── bmi.js
-        │   └── hba1c.js
-        ├── components/
-        ├── context/
-        ├── pages/
-        └── utils/
+├── api/                          ← Vercel Serverless Functions
+│   ├── _lib/
+│   │   ├── db.js                 ← PostgreSQL pool (cached)
+│   │   └── auth.js               ← JWT + CORS helpers
+│   ├── auth/
+│   │   ├── login.js              POST /api/auth/login
+│   │   └── me.js                 GET  /api/auth/me
+│   ├── patients/
+│   │   ├── index.js              GET/POST /api/patients
+│   │   └── [id].js               GET/PUT  /api/patients/:id
+│   ├── history/
+│   │   ├── index.js              GET/POST /api/history
+│   │   └── [id].js               GET/DELETE /api/history/:id
+│   ├── protocols/
+│   │   ├── index.js              GET/POST /api/protocols
+│   │   ├── [id].js               GET/PUT  /api/protocols/:id
+│   │   └── by-calculator/
+│   │       └── [calculator_id].js
+│   └── health.js                 GET /api/health
+├── backend/                      ← Express server (chạy local hoặc fallback)
+│   └── src/
+│       ├── server.js
+│       ├── db.js
+│       ├── initDb.js             ← Script init schema + seed
+│       ├── middleware/auth.js
+│       └── routes/
+├── frontend/                     ← React + Vite
+│   └── src/
+│       ├── App.jsx
+│       ├── calculators/          ← 7 calculators (declarative)
+│       ├── components/
+│       ├── pages/
+│       └── ...
+├── package.json                  ← Root deps cho Vercel
+├── vercel.json                   ← Cấu hình routing/build
+├── .env.example                  ← Mẫu env vars
+└── .gitignore
 ```
 
 ---
@@ -55,183 +81,255 @@ medcalc-llc/
 ### 🧬 Nội tiết – Chuyển hóa
 | ID | Tên | Mục đích |
 |---|---|---|
-| `egfr-ckd-epi` | eGFR CKD-EPI 2021 | Ước tính độ lọc cầu thận |
+| `egfr-ckd-epi` | eGFR CKD-EPI 2021 | Ước tính độ lọc cầu thận (race-free) |
 | `bmi` | BMI | Phân loại WPRO Châu Á |
 | `hba1c-eag` | HbA1c → eAG | Quy đổi đường huyết trung bình |
 
-> Tham khảo từ các nguồn: ESC Guidelines 2023–2024, KDIGO 2024, ADA 2024, WHO/WPRO, NEJM, Chest, JAMA, Arch Intern Med.
+> Tham khảo: ESC 2024, KDIGO 2024, ADA 2024, NEJM, Chest, JAMA, WPRO.
 
 ---
 
-## Tính năng chính
+## Tính năng
 
-✅ **Authentication** – Phân quyền 3 vai trò: `admin`, `doctor`, `nurse`
-✅ **Quản lý bệnh nhân** – Tìm kiếm, tạo mới, xem hồ sơ
-✅ **Lịch sử tính toán** – Lưu theo bệnh nhân, có thể truy xuất
-✅ **Phác đồ nội bộ** – Markdown, gắn với từng bảng kiểm, admin chỉnh sửa
-✅ **In / xuất PDF** – Layout in chuyên nghiệp cho hồ sơ bệnh án
-✅ **Print-friendly** – Sử dụng `window.print()` → "Save as PDF"
+✅ Authentication JWT, phân quyền `admin`/`doctor`/`nurse`
+✅ Quản lý hồ sơ bệnh nhân (CRUD, tìm kiếm)
+✅ Lưu lịch sử tính toán theo bệnh nhân (JSONB lưu inputs + result)
+✅ Phác đồ điều trị nội bộ (Markdown, gắn với từng bảng kiểm)
+✅ In/xuất PDF qua `window.print()` với layout chuyên biệt cho hồ sơ bệnh án
 
 ---
 
-## Khởi động
+# 🚀 Hướng dẫn Deploy
 
-### 1. Backend
+## Bước 1: Chuẩn bị PostgreSQL trên server
+
+### 1.1. Tạo database và user
+
+```sql
+-- Đăng nhập postgres bằng tài khoản superuser
+psql -U postgres
+
+-- Tạo database
+CREATE DATABASE medcalc_db;
+
+-- Tạo user riêng (không dùng postgres user cho production)
+CREATE USER medcalc_user WITH PASSWORD 'mật-khẩu-mạnh-đặt-ở-đây';
+
+-- Cấp quyền
+GRANT ALL PRIVILEGES ON DATABASE medcalc_db TO medcalc_user;
+
+-- Cho user kết nối được
+\c medcalc_db
+GRANT ALL ON SCHEMA public TO medcalc_user;
+
+\q
+```
+
+### 1.2. Cho phép kết nối từ xa
+
+Sửa `pg_hba.conf` (thường ở `/etc/postgresql/14/main/` trên Linux hoặc `C:\Program Files\PostgreSQL\14\data\` trên Windows):
+
+```conf
+# Cho phép kết nối SSL từ Vercel (sẽ ràng buộc IP qua firewall)
+hostssl  medcalc_db  medcalc_user  0.0.0.0/0  scram-sha-256
+```
+
+Sửa `postgresql.conf`:
+
+```conf
+listen_addresses = '*'
+ssl = on
+ssl_cert_file = '/path/to/server.crt'
+ssl_key_file = '/path/to/server.key'
+```
+
+Restart PostgreSQL: `sudo systemctl restart postgresql` (Linux) hoặc qua Services (Windows).
+
+### 1.3. Mở firewall port 5432
+
+**Windows:**
+```powershell
+New-NetFirewallRule -DisplayName "PostgreSQL" -Direction Inbound -LocalPort 5432 -Protocol TCP -Action Allow
+```
+
+**Linux:**
+```bash
+sudo ufw allow 5432/tcp
+```
+
+> ⚠️ **Bảo mật**: Mở port 5432 ra Internet có rủi ro cao. Phương án an toàn hơn:
+> - **Cloudflare Tunnel** hoặc **Tailscale**: tạo tunnel an toàn không cần mở port
+> - **IP whitelist**: chỉ cho phép IP ranges của Vercel (Vercel không công bố IP cố định, nhưng có thể ràng buộc bằng firewall application-layer)
+
+### 1.4. Init schema và seed data
+
+Trên server có cài Node.js + git, clone repo và chạy:
 
 ```bash
-cd backend
+git clone https://github.com/<your-org>/medcalc-llc.git
+cd medcalc-llc/backend
 npm install
-cp .env.example .env       # Chỉnh JWT_SECRET trong production!
-npm run init-db            # Tạo database + seed users
-npm start                  # http://localhost:4000
+cp .env.example .env
+# Sửa .env với DATABASE_URL trỏ về localhost (chạy ngay trên DB server)
+nano .env
+
+npm run init-db
 ```
 
-> **Ghi chú về SQLite driver**: Hệ thống ưu tiên dùng `better-sqlite3` (hiệu năng cao). Nếu môi trường không build được native module (thiếu Python/build-tools), backend tự động fallback sang `node:sqlite` built-in (Node.js 22+). Production khuyến nghị Node 20 LTS + `better-sqlite3`; chỉ cần `apt install python3 build-essential` trên server Ubuntu là đủ.
+Output mong đợi:
+```
+✅ Connected to PostgreSQL
+✅ Schema ready
+✅ Created admin / admin@123
+✅ Created bs.nguyenvan / bacsi@123
+✅ Created bs.tranthi / bacsi@123
+✅ Seeded 2 clinical protocols
+```
 
-**Tài khoản demo (đổi mật khẩu trước khi triển khai):**
-- `admin / admin@123` – Quản trị viên (CRUD phác đồ)
-- `bs.nguyenvan / bacsi@123` – Bác sĩ Nội Tim mạch
-- `bs.tranthi / bacsi@123` – Bác sĩ Nội tiết
+> ⚠️ **Quan trọng**: Đăng nhập với `admin` rồi đổi mật khẩu ngay sau khi init xong.
 
-### 2. Frontend
+---
+
+## Bước 2: Deploy frontend + API lên Vercel
+
+### 2.1. Push code lên GitHub
 
 ```bash
-cd frontend
-npm install
-npm run dev                # http://localhost:5173
+cd medcalc-llc
+git init
+git add .
+git commit -m "Initial commit: MedCalc LLC for TTYT Liên Chiểu"
+git remote add origin https://github.com/<your-org>/medcalc-llc.git
+git branch -M main
+git push -u origin main
 ```
 
-Vite tự proxy `/api/*` → backend ở `localhost:4000`.
+> File `.env` đã được loại trong `.gitignore` — không được commit secrets.
 
-### 3. Build production
+### 2.2. Import vào Vercel
+
+1. Vào [vercel.com/new](https://vercel.com/new)
+2. **Import Git Repository** → chọn repo `medcalc-llc`
+3. **Framework Preset**: `Other` (Vercel sẽ tự đọc `vercel.json`)
+4. **Root Directory**: `.` (mặc định)
+5. **Build & Output Settings**: Vercel tự đọc từ `vercel.json`, không cần đổi
+
+### 2.3. Cấu hình Environment Variables
+
+Vào **Project Settings → Environment Variables**, thêm các biến sau (cho cả Production, Preview, Development):
+
+| Tên biến | Giá trị |
+|----------|---------|
+| `JWT_SECRET` | Chuỗi 64 hex random — tạo bằng `openssl rand -hex 32` |
+| `DATABASE_URL` | `postgresql://medcalc_user:PASS@your-server.com:5432/medcalc_db?sslmode=require` |
+| `PGSSL` | `true` |
+
+Không cần đặt `PGHOST`/`PGPORT`/... nếu đã có `DATABASE_URL`.
+
+### 2.4. Deploy
+
+Click **Deploy**. Vercel sẽ:
+1. Cài deps cả root (`pg`, `bcryptjs`, `jsonwebtoken`) và frontend
+2. Build frontend → `frontend/dist`
+3. Triển khai serverless functions từ thư mục `api/`
+4. Cấu hình routing: `/api/*` → functions, `/*` → static frontend
+
+Sau khi deploy xong, anh/chị sẽ có URL dạng `https://medcalc-llc.vercel.app`.
+
+### 2.5. Test deployment
 
 ```bash
-cd frontend && npm run build       # → frontend/dist/
-# Phục vụ static files qua nginx/Caddy/Apache, point /api → backend:4000
+# Health check (kiểm tra DB connection từ Vercel)
+curl https://medcalc-llc.vercel.app/api/health
+
+# Login
+curl -X POST https://medcalc-llc.vercel.app/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin@123"}'
+```
+
+Nếu `/api/health` báo `db_connected: true` thì kết nối DB OK.
+
+### 2.6. Cấu hình custom domain (tùy chọn)
+
+Trong Vercel: **Settings → Domains** → thêm domain của Trung tâm (vd: `medcalc.ttyt-lienchieu.gov.vn`). Vercel tự cấp HTTPS qua Let's Encrypt.
+
+---
+
+## Quy trình cập nhật code
+
+```bash
+# Trên máy dev
+git add .
+git commit -m "Cập nhật: thêm bảng kiểm Wells Score"
+git push
+
+# Vercel tự động rebuild và deploy khi có push lên main
+```
+
+Nếu sửa schema database, chạy lại trên server:
+```bash
+cd backend && npm run init-db   # script idempotent, không xóa data cũ
 ```
 
 ---
 
-## Triển khai nội bộ trong bệnh viện
+## Troubleshooting
 
-### Khuyến nghị cấu hình
-- **Server**: Ubuntu 22.04+, Node.js 20 LTS, 1 vCPU / 1 GB RAM (đủ cho ~50 người dùng đồng thời)
-- **Reverse proxy**: nginx hoặc Caddy với TLS (Let's Encrypt nếu có domain nội bộ)
-- **Database**: SQLite (đủ dùng), backup định kỳ file `backend/data/medcalc.db`
-- **Process manager**: `pm2` hoặc systemd unit cho auto-restart
+### "db_connected: false" trên `/api/health`
 
-### Mẫu nginx config
-```nginx
-server {
-    listen 443 ssl;
-    server_name medcalc.ttyt-lienchieu.local;
+1. **Kiểm tra `DATABASE_URL` trong Vercel env** có đúng format không
+2. **Test kết nối từ máy ngoài** đến PostgreSQL:
+   ```bash
+   psql "postgresql://medcalc_user:PASS@your-server.com:5432/medcalc_db?sslmode=require"
+   ```
+3. **Kiểm tra `pg_hba.conf`** có cho phép kết nối từ IP của Vercel không
+4. **Kiểm tra firewall** port 5432 có mở không
+5. **Vercel logs**: Project → Deployments → chọn deployment → Functions → xem error logs
 
-    ssl_certificate     /etc/ssl/medcalc.crt;
-    ssl_certificate_key /etc/ssl/medcalc.key;
+### Frontend trắng / lỗi 404 ở route nội bộ
 
-    location /api/ {
-        proxy_pass http://127.0.0.1:4000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
+Kiểm tra `vercel.json` có rule `{ "source": "/(.*)", "destination": "/index.html" }` để SPA routing hoạt động.
 
-    location / {
-        root /var/www/medcalc/dist;
-        try_files $uri /index.html;
-    }
-}
-```
+### Lỗi CORS
 
-### Mẫu systemd unit
-```ini
-[Unit]
-Description=MedCalc LLC Backend
-After=network.target
+API đã set CORS `*` trong `_lib/auth.js`. Nếu deploy frontend ở domain khác Vercel, kiểm tra trình duyệt console.
 
-[Service]
-Type=simple
-User=medcalc
-WorkingDirectory=/opt/medcalc/backend
-ExecStart=/usr/bin/node src/server.js
-Restart=always
-EnvironmentFile=/opt/medcalc/backend/.env
+### "Cannot find module 'pg'" khi deploy
 
-[Install]
-WantedBy=multi-user.target
-```
+Đảm bảo `package.json` ở root có `pg` trong `dependencies`. Vercel cài deps từ root cho serverless functions.
 
 ---
 
-## Mở rộng: Thêm bảng kiểm mới
+## Bảo mật & Tuân thủ
 
-Mỗi calculator là một file JS thuần với schema cố định. Ví dụ thêm Wells Score:
+⚠️ **Lưu ý quan trọng cho cơ sở y tế Việt Nam**:
 
-```javascript
-// frontend/src/calculators/wells.js
-export const wells = {
-  id: 'wells-pe',
-  name: 'Wells (PE)',
-  fullName: 'Thang điểm Wells cho thuyên tắc phổi',
-  category: 'cardio',
-  categoryLabel: 'Tim mạch',
-  shortDescription: 'Đánh giá xác suất lâm sàng thuyên tắc phổi',
-  reference: 'Wells PS et al. Thromb Haemost 2000',
-
-  inputs: [
-    { id: 'dvt_signs', label: 'Triệu chứng DVT', type: 'binary', points: 3 },
-    { id: 'pe_likely', label: 'PE là chẩn đoán khả dĩ nhất', type: 'binary', points: 3 },
-    // ...
-  ],
-
-  compute(values) {
-    let score = 0;
-    for (const inp of this.inputs) {
-      if (values[inp.id] === 1) score += inp.points;
-    }
-    return {
-      score, unit: 'điểm',
-      interpretation: score < 2 ? 'Xác suất thấp' : score < 6 ? 'Trung bình' : 'Cao',
-      riskLevel: score < 2 ? 'low' : score < 6 ? 'mod' : 'high'
-    };
-  }
-};
-```
-
-Sau đó thêm vào `frontend/src/calculators/index.js`:
-```javascript
-import { wells } from './wells.js';
-export const calculators = [ ..., wells ];
-```
-
-UI tự động render — không cần thêm JSX nào.
-
----
-
-## Bảo mật & tuân thủ
-
-- **JWT** với thời hạn 12 giờ, đổi `JWT_SECRET` trong production
-- **Bcrypt** hash mật khẩu (cost = 10)
-- **CORS** mặc định mở, nên giới hạn trong production qua nginx
-- **Audit trail**: Mọi tính toán được lưu kèm `user_id` và timestamp
-- **Khuyến nghị**: Đặt server sau VPN/firewall nội bộ; bật HTTPS; backup DB hàng đêm
-
-> ⚠️ **Tuyên bố pháp lý**: Đây là công cụ hỗ trợ ra quyết định lâm sàng. Quyết định cuối cùng thuộc về bác sĩ điều trị. Hệ thống không thay thế đánh giá lâm sàng toàn diện và phán đoán chuyên môn.
+1. **Nghị định 13/2023/NĐ-CP về dữ liệu cá nhân**: Vercel host frontend ở US/EU. Mặc dù dữ liệu DB nằm ở server Việt Nam, request đi qua Vercel có thể bị xem là "chuyển dữ liệu xuyên biên giới". Cần tham vấn pháp chế.
+2. **Thông tư 54/2017/TT-BYT** về CNTT y tế: Yêu cầu đảm bảo bảo mật, sao lưu, audit.
+3. **Khuyến cáo**:
+   - Bật HTTPS bắt buộc (Vercel tự động)
+   - JWT secret ≥ 32 bytes random
+   - Đổi tất cả mật khẩu mặc định ngay sau init
+   - Backup DB hàng đêm (`pg_dump`)
+   - Audit log: hệ thống đã ghi `user_id` + `created_at` cho mọi calculation
+   - Cân nhắc deploy frontend trên VPS Việt Nam (Viettel Cloud, FPT Cloud) thay vì Vercel nếu pháp chế yêu cầu
 
 ---
 
 ## Roadmap đề xuất (giai đoạn 2)
 
+- [ ] Bộ bảng kiểm mở rộng: qSOFA, GCS, Apgar, Bishop, Padua VTE Risk, ASCVD
 - [ ] 2FA cho tài khoản admin
 - [ ] Tích hợp HIS/LIS qua HL7 FHIR
-- [ ] Module thống kê: phân bố nguy cơ theo khoa, xu hướng
-- [ ] Mobile-responsive cải tiến cho PWA
-- [ ] Bộ bảng kiểm mở rộng: qSOFA, GCS, Apgar, Bishop, Padua VTE Risk, ASCVD
+- [ ] Module thống kê: phân bố nguy cơ theo khoa, xu hướng theo thời gian
 - [ ] Export Excel cho báo cáo định kỳ
 - [ ] So sánh kết quả qua các lần khám của cùng bệnh nhân
+- [ ] Audit log chi tiết (truy cập hồ sơ, đăng nhập thất bại)
 
 ---
 
-## Tài liệu tham khảo của hệ thống
+## Tham khảo
 
 - ESC Guidelines for Atrial Fibrillation 2024
 - ESC Guidelines for ACS 2023

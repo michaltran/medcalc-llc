@@ -1,0 +1,17 @@
+{
+  "name": "medcalc-llc",
+  "version": "1.0.0",
+  "description": "Hệ thống công cụ tính toán y khoa - TTYT khu vực Liên Chiểu",
+  "private": true,
+  "scripts": {
+    "init-db": "node backend/src/initDb.js",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm install && npm run build"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
+  }
+}

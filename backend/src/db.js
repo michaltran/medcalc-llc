@@ -1,42 +1,72 @@
-const path = require('path');
+/**
+ * PostgreSQL connection pool
+ * Hỗ trợ cả Express server (long-lived) và Vercel serverless (short-lived)
+ */
+const { Pool } = require('pg');
 require('dotenv').config();
 
-const DB_PATH = process.env.DB_PATH
-  ? path.resolve(process.env.DB_PATH)
-  : path.join(__dirname, '..', 'data', 'medcalc.db');
+const config = process.env.DATABASE_URL
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false
+    }
+  : {
+      host: process.env.PGHOST || 'localhost',
+      port: Number(process.env.PGPORT) || 5432,
+      database: process.env.PGDATABASE || 'medcalc_db',
+      user: process.env.PGUSER || 'medcalc_user',
+      password: process.env.PGPASSWORD || '',
+      ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false
+    };
 
-let db;
-try {
-  // Production: use better-sqlite3 (faster, more features)
-  const Database = require('better-sqlite3');
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  console.log('[db] Using better-sqlite3 driver');
-} catch (err) {
-  // Fallback: Node.js built-in node:sqlite (Node 22+)
-  console.log('[db] better-sqlite3 unavailable, falling back to node:sqlite');
-  const { DatabaseSync } = require('node:sqlite');
-  const native = new DatabaseSync(DB_PATH);
-  // Adapter to make node:sqlite mimic better-sqlite3 API used in this project
-  db = {
-    exec: (sql) => native.exec(sql),
-    pragma: (s) => native.exec(`PRAGMA ${s}`),
-    prepare: (sql) => {
-      const stmt = native.prepare(sql);
-      return {
-        get: (...args) => stmt.get(...args),
-        all: (...args) => stmt.all(...args),
-        run: (...args) => {
-          const r = stmt.run(...args);
-          return { lastInsertRowid: r.lastInsertRowid, changes: r.changes };
-        }
-      };
-    },
-    close: () => native.close()
-  };
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+// Connection pool sizing:
+// - Express server: 10-20 connections is fine
+// - Vercel serverless: keep low (1-3) since each function spawns its own
+config.max = process.env.VERCEL ? 3 : 10;
+config.idleTimeoutMillis = 30000;
+config.connectionTimeoutMillis = 10000;
+
+const pool = new Pool(config);
+
+pool.on('error', (err) => {
+  console.error('[pg] Unexpected pool error:', err);
+});
+
+/**
+ * Helper: execute a query, return rows
+ */
+async function query(text, params = []) {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(text, params);
+    return result;
+  } finally {
+    client.release();
+  }
 }
 
-module.exports = db;
+/**
+ * Helper: get one row
+ */
+async function one(text, params = []) {
+  const result = await query(text, params);
+  return result.rows[0] || null;
+}
+
+/**
+ * Helper: get all rows
+ */
+async function all(text, params = []) {
+  const result = await query(text, params);
+  return result.rows;
+}
+
+/**
+ * Helper: insert and return the inserted row
+ */
+async function insertReturning(text, params = []) {
+  const result = await query(text, params);
+  return result.rows[0];
+}
+
+module.exports = { pool, query, one, all, insertReturning };
